@@ -20,6 +20,13 @@
 | `核對機制說明.md` | 匯出前核對點運作 |
 | `diff-findings.md` | 改前／改後樣本對照研究 |
 
+
+## 建置說明
+
+GitHub Pages 提供嘅係**混淆／壓縮後**嘅單檔（`index.html` / `excel-picker.html`），方便阻吓隨便 View Source／F12；**唔係**真正保密。可維護嘅清晰原始碼存放喺私有維護位置，**唔會** commit 清晰源碼入呢個公開 repo。
+
+瀏覽器阻吓（可繞過）：關閉右鍵、攔截 F12／Ctrl+Shift+I·J·C／Ctrl+U、短暫 debugger 偵測＋粵語提示。
+
 ## 注意
 
 - 只支援現代瀏覽器（Chrome／Edge 較穩）
