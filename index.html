@@ -74,7 +74,7 @@ th{position:sticky;top:0;background:#f2f3f5}tbody tr{cursor:pointer}tbody tr:hov
   <label><input type="checkbox" id="mNum"> 顯示純數字</label><label><input type="checkbox" id="mTodo"> 只顯示未填</label>
   <input id="mQ" placeholder="搜尋…" style="width:160px">
   <span style="margin-left:auto">套用到：<label><input type="checkbox" id="sc_sheet">Sheet名</label> <label><input type="checkbox" id="sc_header">欄名</label> <label><input type="checkbox" id="sc_meta">Metadata</label> <label><input type="checkbox" id="sc_value">值</label></span></div>
- <div class="bar" style="margin-bottom:8px"><button id="mSuggest">建議（只填空格）</button><button id="mDef">還原預設英文</button><button id="mClear">清空</button><button id="mJson">匯出 JSON</button><button id="mCsv">匯出 CSV</button><button id="mImpBtn">匯入 JSON／CSV</button><input type="file" id="mImp" accept=".json,.csv,.txt" hidden></div>
+ <div class="bar" style="margin-bottom:8px"><button id="mSuggest">建議（只填空白，唔改預設）</button><button id="mDef">還原預設英文</button><button id="mClear">清空</button><button id="mJson">匯出 JSON</button><button id="mCsv">匯出 CSV</button><button id="mImpBtn">匯入 JSON／CSV</button><input type="file" id="mImp" accept=".json,.csv,.txt" hidden></div>
  <div id="mLint"></div><div class="muted">規則：一次過、唔連環 — 先睇整格，冇就用子字串（由左至右、較長嗰條優先，換完嘅字唔會再換）。想換成空白：撳 ∅ 或者填 ⟨空白⟩。</div>
  <div class="mgrid"><div class="mtab"><table><thead><tr><th>原文</th><th>次數</th><th>來源</th><th>替換</th><th>匯出效果</th></tr></thead><tbody id="mBody"></tbody></table></div>
  <div><b>子字串規則</b> <span class="muted">（每行「原文 => 替換」，例如 HKT-Hold => Hold ）</span><textarea id="mSubs" rows="6" placeholder="部分视线受阻 => Restricted View&#10;HKT-Hold => Hold "></textarea></div></div>
@@ -462,13 +462,22 @@ var EPX = (function(C){
     p.meta.forEach(function(r){ a.push(r.map(function(v,j){return tr(v,j===0?'meta':'value',M);})); });
     p.header.forEach(function(r){ a.push(r.map(function(v){return tr(v,'header',M);})); });
     p.data.forEach(function(r){ a.push(r.map(function(v){return tr(v,'value',M);})); }); return a; }
-  var SUGGEST={'楼层':'Level','区域':'Block','排':'Row','座':'Seat','票品名称':'Price Zone','票品价格':'Price','保留座类型':'Reserved Type',
-    '锁座类型':'Hold Type','锁座等级':'Hold Level','锁座时长':'Hold Duration','座位状态':'Seat Status','未出票':'Available','已出票':'Sold',
-    '未规划':'Unplanned','无':'None','规划':'Capacity','可售':'Saleable','当前可售':'Current Available','已售':'Sold','保留':'Reserved','预留':'Hold',
-    '数量':'Qty','金额':'Amount','场次名称':'Session','导出时间':'Export Time','场馆名称':'Venue','项目名称':'Event','项目ID':'Event ID',
-    '座位信息':'Seat Details','座位信息统计':'Seat Summary','长期有效':'Permanent'};
+  var SUGGEST={'楼层':'Level','区域':'Block','排':'Row','座':'Seat','票品名称':'Price Cat','票品价格':'Price','保留座类型':'Reserved Type',
+    '锁座类型':'Hold Code','锁座等级':'Hold Level','锁座时长':'Hold Duration','座位状态':'Seat Status','未出票':'Not Issued','已出票':'Issued',
+    '未规划':'Unplanned','无':'None','规划':'Capacity','可售':'Saleable','当前可售':'Available','已售':'Sold','保留':'Hold','预留':'Hold',
+    '数量':'Qty','金额':'Amount','场次名称':'Performance','导出时间':'Export Time','场馆名称':'Venue','项目名称':'Event','项目ID':'Event ID',
+    '座位信息':'Seat Details','座位信息统计':'Breakdown','长期有效':'Permanent'};
   var SUGGEST_SUBS=[{from:'部分视线受阻',to:'Restricted View'}];
-  function suggest(M,entries){ var n=0; entries.forEach(function(e){ var k=e.zh.trim(); if(!M.map[e.zh] && SUGGEST[k]){ M.map[e.zh]=SUGGEST[k]; n++; } });
+  function suggest(M,entries){ var n=0;
+    function already(zh){
+      if(M.map[zh]) return true;
+      if(M.hmap&&M.hmap[zh]) return true;
+      if(M.smap&&M.smap[zh]) return true;
+      if(M.vmap&&M.vmap[zh]) return true;
+      if(DEFAULT_EN[zh]||DEFAULT_SHEET[zh]||DEFAULT_VALUE[zh]) return true;
+      return false;
+    }
+    entries.forEach(function(e){ var k=e.zh.trim(); if(already(e.zh)) return; if(SUGGEST[k]){ M.map[e.zh]=SUGGEST[k]; n++; } });
     SUGGEST_SUBS.forEach(function(s){ if(!M.subs.some(function(x){return x.from===s.from;})){ M.subs.push(s); n++; } }); return n; }
   function toCSV(rows){ return rows.map(function(r){ return r.map(function(v){ v=C.str(v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }).join(','); }).join('\n'); }
   function parseTable(text){ // paste from Excel (tab) or CSV
@@ -1131,7 +1140,7 @@ document.addEventListener('DOMContentLoaded',function(){
     if(MAP.map[k]!=null||!dmm){ if(e.target.value) MAP.map[k]=e.target.value; else delete MAP.map[k]; }
     else { if(e.target.value) dmm[k]=e.target.value; else delete dmm[k]; } e.target.removeAttribute('data-def'); saveMap(); clearTimeout(this._t); this._t=setTimeout(function(){ var a=document.activeElement; renderMap(); },900); };
   $('#mSubs').onchange=function(){ MAP.subs=this.value.split('\n').map(function(l){ var i=l.indexOf('=>'); return i<0?null:{from:l.slice(0,i).trim(),to:l.slice(i+2).trim()}; }).filter(function(r){return r&&r.from;}); MAP.subsSet=1; saveMap(); renderMap(); toast('子字串規則已更新（'+MAP.subs.length+' 條）'); };
-  $('#mSuggest').onclick=function(){ var n=E.suggest(MAP,S.ents); saveMap(); renderMap(); toast('已建議 '+n+' 個（只填空格，可再改）'); };
+  $('#mSuggest').onclick=function(){ var n=E.suggest(MAP,S.ents); saveMap(); renderMap(); toast('已建議 '+n+' 個（只填空白，唔改預設）'); };
   $('#mDef').onclick=function(){ if(!confirm('還原預設英文？（Sheet名、欄名／Metadata、未出票／已出票同子字串規則會變返預設；你喺呢啲預設項目填過嘅值會被覆蓋；其他值唔變）')) return; MAP.hmap=E.defaultHmap(); MAP.smap=E.defaultSmap(); MAP.vmap=E.defaultVmap(); MAP.subs=E.defaultSubs(); MAP.subsSet=0; [E.DEFAULT_EN,E.DEFAULT_SHEET,E.DEFAULT_VALUE].forEach(function(o){ Object.keys(o).forEach(function(k){ delete MAP.map[k]; }); }); saveMap(); renderMap(); toast('已還原預設英文'); };
   $('#mApply').onchange=function(){ MAP.apply=this.checked; saveMap(); renderMap(); if(typeof renderPreview==='function') renderPreview(); toast(this.checked?'匯出時會套用替換':'匯出時唔套用替換（同原文一樣）'); };
   $('#mClear').onclick=function(){ if(!confirm('清空所有替換同子字串規則？')) return; MAP=E.emptyMapping(); MAP.hmap={}; MAP.smap={}; MAP.vmap={}; MAP.subsSet=1; MAP.defV2=1; saveMap(); renderMap(); };
