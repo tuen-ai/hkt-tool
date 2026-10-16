@@ -331,7 +331,7 @@ var EPX = (function(C){
   var DEFAULT_EN={'楼层':'Level','区域':'Block','排':'Row','座':'Seat','票品名称':'Price Cat','锁座类型':'Hold Code','座位状态':'Seat Status',
     '票品价格':'Price','规划':'Capacity','已售':'Sold','保留':'Hold','预留':'Hold','当前可售':'Available','数量':'Qty','可售':'Saleable','场次名称':'Performance','导出时间':'Export Time'};
   var NO_REF=['保留座类型','锁座等级','锁座时长'];
-  var DEFAULT_SHEET={'座位信息':'Seat Details','座位信息统计':'Breakdown'}, DEFAULT_VALUE={'未出票':'Not Issued','已出票':'Issued'}, DEFAULT_SUBS=[{from:'部分视线受阻',to:'Restricted View'}];
+  var DEFAULT_SHEET={'座位信息':'Seat Details','座位信息统计':'Breakdown'}, DEFAULT_VALUE={'未出票':'Not Issued',"无":"None",'已出票':'Issued'}, DEFAULT_SUBS=[{from:'部分视线受阻',to:'Restricted View'}];
   function defaultSmap(){ return JSON.parse(JSON.stringify(DEFAULT_SHEET)); } function defaultVmap(){ return JSON.parse(JSON.stringify(DEFAULT_VALUE)); } function defaultSubs(){ return JSON.parse(JSON.stringify(DEFAULT_SUBS)); }
   function defaultHmap(){ return JSON.parse(JSON.stringify(DEFAULT_EN)); }
   function fin(e){ return e===EMPTY_TOKEN?'':e; }
