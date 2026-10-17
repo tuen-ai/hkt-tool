@@ -27,6 +27,18 @@ GitHub Pages 提供嘅係**混淆／壓縮後**嘅單檔（`index.html` / `excel
 
 
 
+## 版本（頁底）
+
+頁底顯示 **版本** 同 **更新日期**（例：`版本0.1`、`更新日期：20261017`）。
+
+維護端單一來源：`build/version.json`。每次用 `node build/build-obf.js` 做公開 rebuild／deploy 會自動：
+
+1. 版本 **+0.1**（0.1 → 0.2 → 0.3 …）
+2. 更新日期改為當日 `YYYYMMDD`（Asia/Hong_Kong）
+
+清晰源碼 rebuild（`node build/build.js`）唔會 bump。若要重出同一版，用 `node build/build-obf.js --no-bump`。
+
+
 ## 開啟次數（全球合計）
 
 頁面右上角會顯示全球合計開啟次數（同一瀏覽器分頁 session 內重整唔會重複加 1）。
