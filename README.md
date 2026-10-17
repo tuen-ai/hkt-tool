@@ -25,6 +25,23 @@ GitHub Pages 提供嘅係**混淆／壓縮後**嘅單檔（`index.html` / `excel
 
 瀏覽器阻吓（可繞過）：關閉右鍵、攔截 F12／Ctrl+Shift+I·J·C／Ctrl+U、短暫 debugger 偵測＋粵語提示。
 
+
+
+## 開啟次數（全球合計）
+
+頁面右上角會顯示全球合計開啟次數（同一瀏覽器分頁 session 內重整唔會重複加 1）。
+
+- **後端：** [Abacus](https://jasoncameron.dev/abacus/)（CountAPI 相容、免註冊；唔記錄 IP）
+- **命名空間／鍵：** `hkt-tool` / `pageviews`
+- **查目前數字（唔加 1）：**  
+  https://abacus.jasoncameron.dev/get/hkt-tool/pageviews  
+  回傳例：`{"value":123}`
+- **手動加 1（測試用）：**  
+  https://abacus.jasoncameron.dev/hit/hkt-tool/pageviews
+
+> 備註：舊 CountAPI（`api.countapi.xyz`）同 CounterAPI v1 已不可用；CounterAPI v2 要註冊 API key，故改用 Abacus。
+
+
 ## 注意
 
 - 只支援現代瀏覽器（Chrome／Edge 較穩）
