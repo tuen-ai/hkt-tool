@@ -14,7 +14,7 @@
 
 | 檔案 | 說明 |
 |------|------|
-| `index.html` / `excel-picker.html` | 工具本體（同一份） |
+| `index.html` / `excel-picker.html` | 工具本體（同一份；deploy 必須兩個都更新，Pages 首頁讀 `index.html`） |
 | `核對機制說明.md` | 匯出前核對點運作 |
 | `diff-findings.md` | 改前／改後樣本對照研究 |
 
