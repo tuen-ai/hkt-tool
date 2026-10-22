@@ -59,3 +59,12 @@ GitHub Pages 提供嘅係**混淆／壓縮後**嘅單檔（`index.html` / `excel
 - 只支援現代瀏覽器（Chrome／Edge 較穩）
 - 大檔（幾十萬行）可能較慢
 - Preset 同替換表存在該瀏覽器的 localStorage；可匯出 JSON 做備份
+
+## 麥座導出工具包
+
+Bookmarklet 安裝頁（正式單匯出 + 座位報表導出）。**唔會**收集帳戶資料；要喺已登入嘅 `maizuo.imaitix.com` 撳書籤先用得。
+
+- [開啟安裝頁](./maizuo-export-toolkit.html)
+- 或 [maizuo-export-toolkit/install.html](./maizuo-export-toolkit/install.html)
+
+書籤只係前端腳本；cookie／登入態留喺你瀏覽器，唔經 GitHub。
