@@ -449,9 +449,11 @@
     return { start: all[0], end: all[all.length - 1] };
   }
   function parseEventStart(ev) {
+    /* PMS 場次列表 UI 用 showStartTime／effectDate（唔係 showTime／startTime） */
     var candidates = [
-      ev.startTime, ev.eventStartTime, ev.beginTime, ev.showTime, ev.eventTime,
-      ev.eventStart, ev.startDate, ev.performTime, ev.eventName, ev.name, ev.title, ev.v, ev.label
+      ev.showStartTime, ev.effectDate, ev.startTime, ev.eventStartTime, ev.beginTime,
+      ev.showTime, ev.eventTime, ev.eventStart, ev.startDate, ev.performTime,
+      ev.showEndTime, ev.eventName, ev.name, ev.title, ev.v, ev.label
     ];
     for (var i = 0; i < candidates.length; i++) {
       var s = candidates[i];
@@ -463,8 +465,9 @@
   }
   function parseEventEnd(ev) {
     var candidates = [
-      ev.endTime, ev.eventEndTime, ev.finishTime, ev.showEndTime, ev.eventEnd,
-      ev.endDate, ev.startTime, ev.eventStartTime, ev.showTime, ev.eventTime,
+      ev.endTime, ev.eventEndTime, ev.finishTime, ev.showEndTime, ev.effectEndDate,
+      ev.eventEnd, ev.endDate, ev.showStartTime, ev.effectDate,
+      ev.startTime, ev.eventStartTime, ev.showTime, ev.eventTime,
       ev.eventName, ev.name, ev.title, ev.v, ev.label
     ];
     for (var i = 0; i < candidates.length; i++) {
@@ -495,7 +498,8 @@
     if (!bounds.from && !bounds.to) return true;
     var st = ev.startDate || parseEventStart(ev);
     var en = ev.endDate || parseEventEnd(ev) || st;
-    if (!st && !en) return false; // 有設時段但解析唔到日期 → 唔顯示
+    /* 有設時段但解析唔到日期：仍顯示（通門票／PMS 缺日期欄唔好靜靜濾走） */
+    if (!st && !en) return true;
     if (!st) st = en;
     if (!en) en = st;
     // 區間重疊：場次 [st,en] 同篩選 [from,to] 有交集就收（多日通門票）
@@ -516,14 +520,22 @@
   function enrichEvent(ev, projectName, projectId) {
     var start = parseEventStart(ev);
     var end = parseEventEnd(ev);
-    var showTime = ev.showTime || ev.eventTime || '';
-    if (!showTime && (ev.startTime || ev.endTime)) {
-      showTime = String(ev.startTime || '') + (ev.endTime ? ' ~ ' + ev.endTime : '');
+    var showTime = ev.showTime || ev.showStartTime || ev.eventTime || ev.effectDate || '';
+    if (!showTime && (ev.startTime || ev.endTime || ev.showEndTime)) {
+      var st0 = ev.startTime || ev.showStartTime || '';
+      var en0 = ev.endTime || ev.showEndTime || '';
+      showTime = String(st0) + (en0 ? ' ~ ' + en0 : '');
+    } else if (showTime && (ev.showEndTime || ev.endTime) && String(showTime).indexOf('~') < 0) {
+      var en1 = ev.showEndTime || ev.endTime;
+      if (en1 && String(showTime) !== String(en1)) showTime = String(showTime) + ' ~ ' + en1;
     }
     return {
       eventId: ev.eventId != null ? ev.eventId : (ev.k != null ? ev.k : ev.id),
-      eventName: ev.eventName || ev.name || ev.v || ev.title || ev.showTime || '',
+      eventName: ev.eventName || ev.name || ev.v || ev.title || ev.showTime || ev.showStartTime || '',
       showTime: showTime,
+      showStartTime: ev.showStartTime || '',
+      effectDate: ev.effectDate || '',
+      showEndTime: ev.showEndTime || '',
       startDate: start,
       endDate: end || start,
       projectId: projectId != null ? projectId : ev.projectId,
@@ -538,8 +550,11 @@
         list = (pr.eventComboBoxVOList || pr.eventList || []).map(function (ev) {
           return {
             eventId: ev.eventId != null ? ev.eventId : ev.k,
-            eventName: ev.eventName || ev.name || ev.v || ev.showTime || '',
-            showTime: ev.showTime
+            eventName: ev.eventName || ev.name || ev.v || ev.showTime || ev.showStartTime || '',
+            showTime: ev.showTime || ev.showStartTime || '',
+            showStartTime: ev.showStartTime || '',
+            effectDate: ev.effectDate || '',
+            showEndTime: ev.showEndTime || ''
           };
         });
       }
@@ -554,6 +569,12 @@
     var bounds = periodBounds();
     var raw = state.eventsRaw || [];
     var filtered = raw.filter(function (ev) { return inPeriod(ev, bounds); });
+    filtered.sort(function (a, b) {
+      var ta = a.startDate ? a.startDate.getTime() : 0;
+      var tb = b.startDate ? b.startDate.getTime() : 0;
+      if (ta !== tb) return ta - tb;
+      return String(a.eventName || '').localeCompare(String(b.eventName || ''), 'zh');
+    });
     state.events = filtered;
     elEvents.innerHTML = '';
     if (!filtered.length) {
@@ -699,9 +720,13 @@
       list = (pr.eventComboBoxVOList || pr.eventList || []).map(function (ev) {
         return {
           eventId: ev.eventId != null ? ev.eventId : ev.k,
-          eventName: ev.eventName || ev.name || ev.v || ev.showTime || '',
-          showTime: ev.showTime,
-          startTime: ev.startTime || ev.showTime
+          eventName: ev.eventName || ev.name || ev.v || ev.showTime || ev.showStartTime || '',
+          showTime: ev.showTime || ev.showStartTime || '',
+          showStartTime: ev.showStartTime || '',
+          effectDate: ev.effectDate || '',
+          showEndTime: ev.showEndTime || '',
+          startTime: ev.startTime || ev.showStartTime || ev.showTime || ev.effectDate,
+          endTime: ev.endTime || ev.showEndTime || ''
         };
       });
     }
@@ -807,31 +832,51 @@
     if (projectId == null || projectId === '') return [];
     var attempts = [
       { projectId: projectId, page: 1, pageSize: 10000, querySeatTotalCount: false },
+      { projectId: projectId, page: 1, pageSize: 10000 },
+      { projectId: projectId, page: 1, pageSize: 1000, querySeatTotalCount: false },
       { projectId: projectId, page: 1, pageSize: 1000 }
     ];
+    var lastErr = null;
     for (var i = 0; i < attempts.length; i++) {
       try {
         var res = await api('GET', PMS + '/pms/event/findEventList', attempts[i]);
         var list = normalizePmsEventList(unwrapData(res));
-        if (list.length) return list;
-      } catch (e) { /* try next */ }
+        if (list.length) {
+          if (i > 0) logLine('  findEventList 用第 ' + (i + 1) + ' 組參數拎到 ' + list.length + ' 場', 'ok');
+          return list;
+        }
+        logLine('  findEventList 參數組 ' + (i + 1) + ' 回傳 0 場（projectId=' + projectId + '）', 'warn');
+      } catch (e) {
+        lastErr = e;
+        logLine('  findEventList 失敗：' + (e && e.message ? e.message : e), 'warn');
+      }
     }
     // fallback：場次下拉
     try {
       var res2 = await api('GET', PMS + '/pms/event/getEventComboBox', { projectId: projectId });
       var raw = unwrapData(res2);
-      if (Array.isArray(raw)) return raw;
+      if (Array.isArray(raw)) {
+        if (!raw.length) logLine('  getEventComboBox 亦係 0 場（projectId=' + projectId + '）', 'warn');
+        return raw;
+      }
       if (raw && Array.isArray(raw.commonSelects)) {
+        if (!raw.commonSelects.length) logLine('  getEventComboBox.commonSelects 空（projectId=' + projectId + '）', 'warn');
         return raw.commonSelects.map(function (it) {
           return {
             eventId: it.k != null ? it.k : it.eventId,
             eventName: it.v != null ? it.v : it.eventName,
-            showTime: it.showTime || it.eventTime || ''
+            showTime: it.showTime || it.showStartTime || it.eventTime || '',
+            showStartTime: it.showStartTime || '',
+            effectDate: it.effectDate || '',
+            showEndTime: it.showEndTime || ''
           };
         });
       }
-      return normalizePmsEventList(raw);
+      var norm = normalizePmsEventList(raw);
+      if (!norm.length) logLine('  PMS findEventList／getEventComboBox 都無場次（projectId=' + projectId + '）' + (lastErr ? '；最後錯誤：' + (lastErr.message || lastErr) : ''), 'warn');
+      return norm;
     } catch (e2) {
+      logLine('  getEventComboBox 失敗：' + (e2 && e2.message ? e2.message : e2) + '（projectId=' + projectId + '）', 'warn');
       return [];
     }
   }
@@ -862,14 +907,21 @@
           eventId: e.eventId,
           eventName: e.eventName,
           showTime: e.showTime,
-          startTime: e.startDate ? fmtYmd(e.startDate) : (e.showTime || ''),
-          endTime: e.endDate && e.endDate !== e.startDate ? fmtYmd(e.endDate) : '',
+          showStartTime: e.showStartTime || '',
+          effectDate: e.effectDate || '',
+          showEndTime: e.showEndTime || '',
+          startTime: e.startDate ? fmtYmd(e.startDate) : (e.showTime || e.showStartTime || ''),
+          endTime: e.endDate && e.endDate !== e.startDate ? fmtYmd(e.endDate) : (e.showEndTime || ''),
           startDate: e.startDate,
           endDate: e.endDate
         };
       });
       if (added) {
-        logLine('  項目「' + (pr.projectName || pid) + '」：PMS 補咗 ' + added + ' 個場次（BI 樹可能缺通門票／多日場）', 'ok');
+        logLine('  項目「' + (pr.projectName || pid) + '」：PMS 補咗 ' + added + ' 個場次（BI 樹可能缺通門票／多日場；PMS 原始 ' + (pmsList || []).length + '）', 'ok');
+      } else if ((pmsList || []).length) {
+        logLine('  項目「' + (pr.projectName || pid) + '」：PMS 回 ' + pmsList.length + ' 場，全部已喺 BI 樹', 'ok');
+      } else {
+        logLine('  項目「' + (pr.projectName || pid) + '」：PMS 無額外場次（findEventList／combo 空）', 'warn');
       }
       out.push(pr);
     }
@@ -917,10 +969,17 @@
     }
     setMsg('載入場次（BI＋PMS 補齊）…');
     await mergePmsEventsIntoProjects(prs);
+    var rawBefore = 0;
+    prs.forEach(function (pr) { rawBefore += (pr.events || []).length; });
     var n2 = fillEventsFromProjects(prs);
+    if (hasPeriod && rawBefore > n2) {
+      logLine('  時段篩選：合併後 ' + rawBefore + ' 場 → 顯示 ' + n2 + '（被日期篩走 ' + (rawBefore - n2) + '；無日期者已保留）', 'warn');
+    } else if (rawBefore) {
+      logLine('  合併後 ' + rawBefore + ' 場，顯示 ' + n2, 'ok');
+    }
     setMsg(n2
       ? ('已揀 ' + prs.length + ' 個項目 · 顯示 ' + n2 + ' 個場次' +
-        (hasPeriod ? '（已套用活動日期／多日場重疊）' : '') + '——可改選後導出')
+        (hasPeriod ? '（已套用活動日期／跨日重疊；無日期亦保留）' : '') + '——可改選後導出')
       : (hasPeriod ? '此時段所揀項目無場次' : '所揀項目未搵到場次'));
     return n2;
   }
