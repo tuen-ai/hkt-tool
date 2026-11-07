@@ -79,7 +79,7 @@ body:not(.has-file) #siteFooter{margin-top:28px}
 <body>
 <header class="topbar">
  <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><strong>HKT tools</strong><span class="brand-divider"></span><span class="product">Seat Detail Report</span></div>
- <div class="top-actions"><div id="pvCount" class="muted" aria-live="polite"></div><button id="helpBtn" class="icon-button" title="使用說明" aria-label="使用說明">?</button></div>
+ <div class="top-actions"><div id="pvCount" class="muted" aria-live="polite">總使用次數：…</div></div>
 </header>
 <div id="landing" class="landing-drop" role="button" tabindex="0" aria-label="上傳 Excel 或 CSV">
  <div class="drop-ico" aria-hidden="true">📂</div>
@@ -139,7 +139,7 @@ body:not(.has-file) #siteFooter{margin-top:28px}
  </aside>
 </main>
 <section id="mappingPanel" class="inline-mapping panel" hidden aria-labelledby="mappingTitle">
- <div class="inline-mapping-heading"><h2 id="mappingTitle">⑥ 值替換表（原文 → 替換；中文、英文代號都得）</h2><span id="mappingStat" class="muted"></span></div>
+ <div class="inline-mapping-heading"><h2 id="mappingTitle">值替換表（原文 → 替換；中文、英文代號都得）</h2><span id="mappingStat" class="muted"></span></div>
  <p class="help-text">只會列出保留咗嘅欄嘅值。例如預設刪咗「保留座類型」，相關值就唔會出現，要改佢哋，先勾返嗰欄。整格完全相同先替換；留空＝保持原文；整格替換優先於子字串規則。</p>
  <div class="inline-mapping-enabled"><label class="check-line"><input id="mappingEnabled" type="checkbox" checked><strong>匯出時套用替換</strong></label><span class="help-text">（關咗＝匯出原文，同原檔一樣。Sheet 名、欄名／Metadata、未出票／已出票同子字串已預填英文（藍底），可以改；你自己填過嘅會優先）</span></div>
  <div class="inline-mapping-filters">
@@ -693,7 +693,6 @@ body:not(.has-file) #siteFooter{margin-top:28px}
     $('#landing').addEventListener('click',()=>{if(!S.busy)$('#file').click();});
     $('#landing').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();if(!S.busy)$('#file').click();}});
     $('#file').addEventListener('change',e=>{if(!S.busy)loadFile(e.target.files[0]);});
-    $('#helpBtn').addEventListener('click',()=>$('#helpDialog').showModal());
     $('#helpCloseBtn').addEventListener('click',()=>$('#helpDialog').close());
     $('#presetSelect').addEventListener('change',()=>{S.selectedPreset=$('#presetSelect').value;});
     $('#applyPresetBtn').addEventListener('click',()=>mutate(()=>{applyPreset(choosePreset());refreshPrecheck();setFnameAuto();},'已套用；請查看每個 Sheet 的配對結果。'));
@@ -807,14 +806,14 @@ body:not(.has-file) #siteFooter{margin-top:28px}
     var el=$('#pvCount'); if(!el) return;
     var KEY='hktPvCounted', NS='hkt-tool', K='pageviews';
     var base='https://abacus.jasoncameron.dev';
-    function show(n){ if(n==null||n!==n) return; el.textContent='總使用次數：'+n; }
-    function getOnly(){ fetch(base+'/get/'+NS+'/'+K,{mode:'cors',credentials:'omit'}).then(function(r){return r.json();}).then(function(j){ if(j&&typeof j.value==='number') show(j.value); }).catch(function(){}); }
+    function show(n){ n=Number(n); if(!isFinite(n)) return; el.textContent='總使用次數：'+n; }
+    function getOnly(){ fetch(base+'/get/'+NS+'/'+K,{mode:'cors',credentials:'omit'}).then(function(r){return r.json();}).then(function(j){ if(j&&j.value!=null) show(j.value); }).catch(function(){}); }
     try{
       if(sessionStorage.getItem(KEY)){ getOnly(); return; }
       sessionStorage.setItem(KEY,'1');
     }catch(e){}
     fetch(base+'/hit/'+NS+'/'+K,{mode:'cors',credentials:'omit'}).then(function(r){return r.json();}).then(function(j){
-      if(j&&typeof j.value==='number') show(j.value); else getOnly();
+      if(j&&j.value!=null) show(j.value); else getOnly();
     }).catch(function(){ getOnly(); });
   })();
   readStoredPresets();bind();showApp(false);render();
