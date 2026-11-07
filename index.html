@@ -804,17 +804,31 @@ body:not(.has-file) #siteFooter{margin-top:28px}
   Object.defineProperty(window,'HKTReview',{value:{version:'1.0',getState:()=>S,loadFile,verifyAndPrepare,calculate,effectiveMapping,render,suggestFname,asOfToday},writable:false});
   (function trackPageviews(){
     var el=$('#pvCount'); if(!el) return;
-    var KEY='hktPvCounted', NS='hkt-tool', K='pageviews';
+    var KEY='hktPvCounted', LOCAL_KEY='hkt-tool.pageviews.local', NS='hkt-tool', K='pageviews';
     var base='https://abacus.jasoncameron.dev';
     function show(n){ n=Number(n); if(!isFinite(n)) return; el.textContent='總使用次數：'+n; }
-    function getOnly(){ fetch(base+'/get/'+NS+'/'+K,{mode:'cors',credentials:'omit'}).then(function(r){return r.json();}).then(function(j){ if(j&&j.value!=null) show(j.value); }).catch(function(){}); }
+    function readLocal(){ try{ var n=Number(localStorage.getItem(LOCAL_KEY)||0); return (isFinite(n)&&n>0)?n:0; }catch(e){ return 0; } }
+    function bumpLocal(){ var n=readLocal()+1; try{ localStorage.setItem(LOCAL_KEY,String(n)); }catch(e){} return n; }
+    function fallback(doBump){ show(doBump?bumpLocal():(readLocal()||1)); }
+    function getOnly(retry, doBump){
+      fetch(base+'/get/'+NS+'/'+K,{mode:'cors',credentials:'omit'}).then(function(r){return r.json();}).then(function(j){
+        if(j&&j.value!=null) show(j.value);
+        else if(!retry) getOnly(true, doBump);
+        else fallback(!!doBump);
+      }).catch(function(){
+        if(!retry) getOnly(true, doBump);
+        else fallback(!!doBump);
+      });
+    }
+    var firstVisit=true;
     try{
-      if(sessionStorage.getItem(KEY)){ getOnly(); return; }
-      sessionStorage.setItem(KEY,'1');
+      if(sessionStorage.getItem(KEY)) firstVisit=false;
+      else sessionStorage.setItem(KEY,'1');
     }catch(e){}
+    if(!firstVisit){ getOnly(false, false); return; }
     fetch(base+'/hit/'+NS+'/'+K,{mode:'cors',credentials:'omit'}).then(function(r){return r.json();}).then(function(j){
-      if(j&&j.value!=null) show(j.value); else getOnly();
-    }).catch(function(){ getOnly(); });
+      if(j&&j.value!=null) show(j.value); else getOnly(false, true);
+    }).catch(function(){ getOnly(false, true); });
   })();
   readStoredPresets();bind();showApp(false);render();
 })();
