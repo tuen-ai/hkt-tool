@@ -119,11 +119,11 @@
         </div>
         <div class="card" id="catCard" hidden>
           <h3>② Price Category 次序</h3>
-          <div class="muted">載入後預設按價錢由高至低排（同價 Seat on Floor 先於 Seat on Riser，其他名稱保持原檔相對次序）。拖曳或者用 ▲▼ 調序，只改 Breakdown 資料行（Total 永遠最後）。「還原原檔次序」先係返原檔順序。座位明細保持原檔行序，唔跟票品重排。</div>
+          <div class="muted">載入後預設：一般票品先，然後 Restricted View，然後 Accessible Seats（價錢再高都唔會排到一般票品前面）。每一組內價錢由高至低，同價 Seat on Floor 先於 Seat on Riser，其他名稱保持原檔相對次序。拖曳或者用 ▲▼ 調序，只改 Breakdown 資料行（Total 永遠最後）。「還原原檔次序」先係返原檔順序。座位明細保持原檔行序，唔跟票品重排。</div>
           <div class="catbar">
             <b id="catCount"></b>
             <span class="catbar-actions">
-              <button type="button" id="btnCatDefault" title="價錢由高至低；同價 Floor 先於 Riser（Seat on Floor / Seat on Riser）。其餘保持原檔相對次序。">預設次序</button>
+              <button type="button" id="btnCatDefault" title="一般票品，然後 Restricted View，然後 Accessible Seats。每一組內價錢由高至低；同價 Floor 先於 Riser。其餘保持原檔相對次序。">預設次序</button>
               <button type="button" id="btnCatReset" title="返到原檔入面嘅票品次序，唔係預設排序。">還原原檔次序</button>
             </span>
           </div>
@@ -856,18 +856,20 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return out;
   }
 
-  /* Default Breakdown category order: numeric price high to low, then at the
-     same price Floor before Riser. Anything those rules do not decide keeps
-     source relative order. Names are not sorted alphabetically. */
-  function defaultCategoryOrder(rows) {
+  /* Restricted View and Accessible Seat(s) are their own bands. "Inaccessible"
+     does not match Accessible. A name that contains both phrases is Restricted View. */
+  function categoryBand(name) {
+    var s = String(name == null ? "" : name);
+    if (/\brestricted\s+view\b/i.test(s)) return "restricted";
+    if (/\baccessible\s+seats?\b/i.test(s)) return "accessible";
+    return "ordinary";
+  }
+
+  function orderByPrice(recs) {
     var priced = [];
     var unpriced = [];
-    (rows || []).forEach(function (row, i) {
-      var name = String(row && row.name != null ? row.name : "").trim();
-      if (!name) return;
-      var price = row.price;
-      var rec = { name: name, price: price, src: i };
-      if (typeof price === "number" && isFinite(price)) priced.push(rec);
+    recs.forEach(function (rec) {
+      if (typeof rec.price === "number" && isFinite(rec.price)) priced.push(rec);
       else unpriced.push(rec);
     });
     priced.sort(function (a, b) {
@@ -884,6 +886,24 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
     unpriced.forEach(function (it) { names.push(it.name); });
     return names;
+  }
+
+  /* Default Breakdown category order: ordinary categories, then Restricted View,
+     then Accessible Seats. Price never lifts a special category above an ordinary
+     one, and Accessible stays after every Restricted View. Inside each band,
+     numeric price is high to low, then Floor before Riser at the same price.
+     Anything those rules do not decide keeps source relative order. */
+  function defaultCategoryOrder(rows) {
+    var bands = { ordinary: [], restricted: [], accessible: [] };
+    (rows || []).forEach(function (row, i) {
+      var name = String(row && row.name != null ? row.name : "").trim();
+      if (!name) return;
+      var rec = { name: name, price: row.price, src: i };
+      bands[categoryBand(name)].push(rec);
+    });
+    return orderByPrice(bands.ordinary)
+      .concat(orderByPrice(bands.restricted))
+      .concat(orderByPrice(bands.accessible));
   }
 
   /* ---------- ExcelJS formatter ---------- */
