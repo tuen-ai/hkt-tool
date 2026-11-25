@@ -106,11 +106,7 @@
 
 <div class="wrap">
   <div id="landing">
-    <div class="drop" id="drop">
-      拖入升級後嘅英文 Seat Report（.xlsx）<br>
-      <b>或者撳呢度揀檔</b>
-      <div class="muted" style="margin-top:6px">會自動識別 Seat Details / Breakdown、動態掃描鎖座類型，唔寫死欄位</div>
-    </div>
+    <div class="drop" id="drop">Upload</div>
     <input type="file" id="file" accept=".xlsx,.xls" hidden>
   </div>
 
@@ -820,7 +816,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return b;
   }
 
-  /* Metadata values: Excel "Center Across Selection" from B to last table column, no merge. */
+  /* Metadata values: Excel "Center Across Selection" from B to last table column, no merge.
+     Wrap stays off — see fitMetadataSpan. */
   function styleMetaBlock(ws, lastCol) {
     lastCol = Math.max(2, lastCol || 2);
     for (var r = 1; r <= 6; r++) {
@@ -931,6 +928,82 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     if (w < min) w = min;
     if (w > max) w = max;
     return Math.ceil(w * 10) / 10;
+  }
+
+  /* Calibri 11 advance widths in hundredths of a CSS pixel at 96dpi.
+     Carlito is metric-compatible with Calibri, so these match Excel's font.
+     Index 0 is U+0020. */
+  var CALIBRI_11_CENTIPX = [332,478,588,730,743,1048,1000,324,445,445,730,730,366,449,370,566,743,743,743,743,743,743,743,743,743,743,392,392,730,730,730,680,1311,849,798,782,902,716,674,925,914,370,468,762,617,1254,947,971,758,987,796,674,715,941,832,1305,761,715,687,450,566,450,730,730,427,703,771,620,771,730,448,690,771,337,351,667,337,1172,771,773,771,771,511,574,491,771,662,1048,635,664,579,461,675,461,730];
+
+  function calibri11Px(str) {
+    var w = 0, s = String(str == null ? "" : str);
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (c >= 32 && c <= 126) w += CALIBRI_11_CENTIPX[c - 32] / 100;
+      else if (c > 127) w += 15;
+      else w += 4;
+    }
+    return w;
+  }
+
+  /* Excel's column-width tooltip for Calibri 11: width 10.00 → 75 pixels. */
+  function colWidthPx(width) {
+    var w = (width == null) ? 8.43 : width;
+    if (w < 1) return Math.floor(w * 12);
+    return Math.floor(w * 7 + 5);
+  }
+  function pxToColWidth(px) {
+    var w = px < 12 ? px / 12 : (px - 5) / 7;
+    var out = Math.ceil(w * 10 - 1e-9) / 10;
+    if (out < 0) out = 0;
+    while (colWidthPx(out) < px && out < 255) out = Math.round((out + 0.1) * 10) / 10;
+    return out;
+  }
+  function metadataSpanPx(ws, lastCol) {
+    var px = 0;
+    for (var c = 2; c <= lastCol; c++) px += colWidthPx(ws.getColumn(c).width);
+    return px;
+  }
+
+  /* Center Across Selection is one centered line. On a narrow no-Hold
+     breakdown that line is wider than B:last, so Excel clips both ends
+     (Venue starting mid-word, Event Name prefix missing). Wrap Text is not a
+     reliable fix: Excel wraps to the first column, not the center-across span.
+     Shrink-to-fit would drop the glyphs below Calibri 11. Widen B:last by the
+     smallest even share that fits every metadata value at Calibri 11. Spans
+     that already fit, including wider Hold reports, keep their table widths.
+     Column A and row 7 are not touched, and the cell values are not rewritten. */
+  function fitMetadataSpan(ws, lastCol) {
+    lastCol = Math.max(2, lastCol || 2);
+    var PAD = 32;
+    var need = 0;
+    for (var r = 1; r <= 6; r++) {
+      var t = cellText(ws.getCell(r, 2).value);
+      if (!t) continue;
+      String(t).split(/\r\n|\n|\r/).forEach(function (line) {
+        need = Math.max(need, calibri11Px(line));
+      });
+    }
+    if (!need) return;
+    need = Math.ceil(need + PAD);
+    if (metadataSpanPx(ws, lastCol) >= need) return;
+    var cols = [];
+    for (var c = 2; c <= lastCol; c++) cols.push(c);
+    var deficit = need - metadataSpanPx(ws, lastCol);
+    var base = Math.floor(deficit / cols.length);
+    var rem = deficit - base * cols.length;
+    cols.forEach(function (c, i) {
+      var curPx = colWidthPx(ws.getColumn(c).width);
+      var add = base + (i >= cols.length - rem ? 1 : 0);
+      var next = pxToColWidth(curPx + add);
+      if (next > (ws.getColumn(c).width || 0)) ws.getColumn(c).width = next;
+    });
+    var guard = 0;
+    while (metadataSpanPx(ws, lastCol) < need && guard < 40) {
+      var last = ws.getColumn(lastCol);
+      last.width = Math.round(((last.width || 8.43) + 0.1) * 10) / 10;
+      guard++;
+    }
   }
 
   function formatQty(n) {
@@ -1252,6 +1325,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
       // Apply last so widths / header styles cannot overwrite the metadata block
       styleMetaBlock(ws, maxC);
+      fitMetadataSpan(ws, maxC);
     });
 
     var outBuf = await out.xlsx.writeBuffer();
