@@ -38,7 +38,12 @@
   button,.btn{background:#fff;border:1px solid #c9cdd4;border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit}
   button.pri{background:#1677ff;border-color:#1677ff;color:#fff;font-weight:800}
   button:disabled{opacity:.5;cursor:not-allowed}
-  .fname{background:#f7f8fa;border:1px solid #e5e6eb;border-radius:8px;padding:7px 9px;font-size:12px;font-weight:700;word-break:break-word;margin-top:6px}
+  .fname{background:#f7f8fa;border:1px solid #e5e6eb;border-radius:8px;padding:7px 9px;font-size:12px;font-weight:700;word-break:break-word;overflow-wrap:anywhere;line-height:1.45;margin-top:6px}
+  .namecard{margin-top:12px}
+  .namefield{margin-top:10px}
+  .namelab{display:block;font-size:11px;font-weight:700;color:#4e5969;margin:0 0 4px}
+  .namesrc{font-size:13px;line-height:1.45;overflow-wrap:anywhere;word-break:break-word;background:#f7f8fa;border:1px solid #eef0f3;border-radius:6px;padding:8px 10px;min-height:36px}
+  .namecard input[type=text]{width:100%;padding:8px 10px;font-size:14px}
   .maptbl{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:6px}
   .maptbl th{text-align:left;color:#86909c;font-weight:600;padding:3px 4px}
   .maptbl td{padding:3px 4px;border-top:1px solid #f2f3f5;vertical-align:top}
@@ -119,7 +124,6 @@
         </div>
         <div class="card" id="catCard" hidden>
           <h3>② Price Category 次序</h3>
-          <div class="muted">載入後預設：一般票品先，然後 Restricted View，然後 Accessible Seats（價錢再高都唔會排到一般票品前面）。每一組內價錢由高至低，同價 Seat on Floor 先於 Seat on Riser，其他名稱保持原檔相對次序。拖曳或者用 ▲▼ 調序，只改 Breakdown 資料行（Total 永遠最後）。「還原原檔次序」先係返原檔順序。座位明細保持原檔行序，唔跟票品重排。</div>
           <div class="catbar">
             <b id="catCount"></b>
             <span class="catbar-actions">
@@ -148,17 +152,6 @@
           <label class="row" style="margin-top:8px"><input type="checkbox" id="typoFix"> 可選：修備注 typo／尾空格（repoen→reopen、McDonals→McDonalds、trim 尾空格）。預設關閉，原文保留。</label>
           <label class="row"><input type="checkbox" disabled> 唔自動改 LEVEL／GroupsHold 名稱</label>
         </div>
-        <div class="card">
-          <h3>⑤ 項目名稱同檔名</h3>
-          <div class="muted">格式：英文 &lt;項目名稱&gt;_&lt;場次&gt;_As of YYYYMMDD（As of 用 Export Time 日期）。留空＝用原文（只做檔名安全字元處理）。</div>
-          <table class="maptbl">
-            <tr><th>來源</th><th>匯出檔名用（可改）</th></tr>
-            <tr><td id="srcProject"></td><td><input type="text" id="repProject" placeholder="留空＝用原文"></td></tr>
-            <tr><td id="srcSession"></td><td><input type="text" id="repSession" placeholder="留空＝用原文"></td></tr>
-          </table>
-          <button type="button" id="btnSuggest" style="margin-top:6px">填入建議縮短名</button>
-          <div class="fname" id="fnamePrev"></div>
-        </div>
       </aside>
       <main>
         <div class="diag" id="kpis"></div>
@@ -170,6 +163,28 @@
         </div>
         <div class="tabs" id="tabs"></div>
         <div class="previewbox" id="preview"></div>
+        <div class="card namecard" id="nameCard">
+          <h3>⑤ 項目名稱同檔名</h3>
+          <div class="muted">格式：英文 &lt;項目名稱&gt;_&lt;場次&gt;_As of YYYYMMDD（As of 用 Export Time 日期）。留空＝用原文（只做檔名安全字元處理）。</div>
+          <div class="namefield">
+            <div class="namelab">來源 · 項目名稱</div>
+            <div class="namesrc" id="srcProject"></div>
+          </div>
+          <div class="namefield">
+            <label class="namelab" for="repProject">匯出檔名用 · 項目名稱（可改）</label>
+            <input type="text" id="repProject" placeholder="留空＝用原文">
+          </div>
+          <div class="namefield">
+            <div class="namelab">來源 · 場次</div>
+            <div class="namesrc" id="srcSession"></div>
+          </div>
+          <div class="namefield">
+            <label class="namelab" for="repSession">匯出檔名用 · 場次（可改）</label>
+            <input type="text" id="repSession" placeholder="留空＝用原文">
+          </div>
+          <button type="button" id="btnSuggest" style="margin-top:10px">填入建議縮短名</button>
+          <div class="fname" id="fnamePrev"></div>
+        </div>
         <div class="verify" id="verifyBox">
           <h3>尚未匯出</h3>
           <p class="muted">撳下面會格式化、重新讀返輸出 bytes，同原檔逐格核對。只容許已聲明嘅格式改變（同埋你剔選嘅 typo 修正）。核對唔通過會攔住下載。</p>
