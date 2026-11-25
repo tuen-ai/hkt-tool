@@ -79,6 +79,7 @@
   @keyframes sp{to{transform:rotate(360deg)}}
   .force{margin-top:8px;padding:8px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;display:none}
   .catbar{display:flex;justify-content:space-between;align-items:center;margin:0 0 6px;gap:8px;flex-wrap:wrap}
+  .catbar-actions{display:flex;gap:6px;flex-wrap:wrap}
   .catbox{max-height:340px;overflow:auto;border:1px solid #e5e6eb;border-radius:8px;background:#fff}
   .catitem{display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid #eef0f3;background:#fff;cursor:grab;user-select:none;font-size:12px}
   .catitem:last-child{border-bottom:0}
@@ -119,10 +120,13 @@
         </div>
         <div class="card" id="catCard" hidden>
           <h3>② Price Category 次序</h3>
-          <div class="muted">載入後動態掃描票品。拖曳或者用 ▲▼ 調序，只改 Breakdown 資料行（Total 永遠最後）。座位明細保持原檔行序，唔跟票品重排，避免打亂 Level／Block／Row 空間次序。</div>
+          <div class="muted">載入後預設按價錢由高至低排（同價 Seat on Floor 先於 Seat on Riser，其他名稱保持原檔相對次序）。拖曳或者用 ▲▼ 調序，只改 Breakdown 資料行（Total 永遠最後）。「還原原檔次序」先係返原檔順序。座位明細保持原檔行序，唔跟票品重排。</div>
           <div class="catbar">
             <b id="catCount"></b>
-            <button type="button" id="btnCatReset">還原原檔次序</button>
+            <span class="catbar-actions">
+              <button type="button" id="btnCatDefault" title="價錢由高至低；同價 Floor 先於 Riser（Seat on Floor / Seat on Riser）。其餘保持原檔相對次序。">預設次序</button>
+              <button type="button" id="btnCatReset" title="返到原檔入面嘅票品次序，唔係預設排序。">還原原檔次序</button>
+            </span>
           </div>
           <div class="catbox" id="catList"></div>
           <div class="catnote">未喺清單出現嘅票品會按原檔相對次序補喺最後（Total 之前）。</div>
@@ -459,6 +463,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return bottom;
   }
 
+  function categoryPrice(v) {
+    if (typeof v === "number" && isFinite(v)) return v;
+    if (v && typeof v === "object") {
+      if (typeof v.result === "number" && isFinite(v.result)) return v.result;
+    }
+    var t = cellText(v).trim().replace(/,/g, "");
+    if (isNumericString(t)) return Number(t);
+    return null;
+  }
+
   // Dynamic Breakdown header: start at "Price Category", depth 1..3
   // (category row, optional Hold-type row, optional remark row), then the
   // first data row (numeric Price/Capacity, or a non-header category label).
@@ -568,10 +582,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     var priceCategories = [];
+    var priceCategoryRows = [];
     if (dataStart && dataEnd && dataEnd >= dataStart) {
       for (var pr = dataStart; pr <= dataEnd; pr++) {
         var cat = cellText(getVal(pr, nameCol)).trim();
-        if (cat && !isPriceCategoryLabel(cat)) priceCategories.push(cat);
+        if (cat && !isPriceCategoryLabel(cat)) {
+          priceCategories.push(cat);
+          priceCategoryRows.push({ name: cat, price: categoryPrice(priceCol ? getVal(pr, priceCol) : null) });
+        }
       }
     }
 
@@ -590,7 +608,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       dataEnd: dataEnd,
       totalRow: totalRow,
       holdTypes: types,
-      priceCategories: priceCategories
+      priceCategories: priceCategories,
+      priceCategoryRows: priceCategoryRows
     };
   }
 
@@ -632,6 +651,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       info.totalRow = layout.totalRow;
       info.holdTypes = layout.holdTypes;
       info.priceCategories = layout.priceCategories;
+      info.priceCategoryRows = layout.priceCategoryRows;
     }
     if (kind === "seat-details" && headerRow) {
       info.dataStart = headerRow + 1;
@@ -734,9 +754,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     });
     if (!meta) meta = sheets[0] ? sheets[0].meta : { eventName: "", sessionName: "", exportTime: "" };
     var priceCategories = [];
+    var priceCategoryRows = [];
     sheets.forEach(function (sh) {
       if (sh.info && sh.info.priceCategories && sh.info.priceCategories.length && !priceCategories.length) {
         priceCategories = sh.info.priceCategories.slice();
+        priceCategoryRows = (sh.info.priceCategoryRows || []).slice();
       }
     });
 
@@ -747,6 +769,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       meta: meta,
       issues: issues,
       priceCategories: priceCategories,
+      priceCategoryRows: priceCategoryRows,
       previewLimit: PREVIEW_LIMIT
     };
   }
@@ -805,6 +828,63 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (idx >= 0) out.push(remaining.splice(idx, 1)[0]);
     });
     return out.concat(remaining);
+  }
+
+  /* Floor before Riser only when the name has that word on its own
+     (Seat on Floor / Seat on Riser, any case). Both words, or neither, stay unresolved. */
+  function categoryZone(name) {
+    var s = String(name == null ? "" : name);
+    var floor = /\bfloor\b/i.test(s);
+    var riser = /\briser\b/i.test(s);
+    if (floor && !riser) return "floor";
+    if (riser && !floor) return "riser";
+    return "";
+  }
+
+  function orderFloorBeforeRiser(items) {
+    var slots = [];
+    var floors = [];
+    var risers = [];
+    items.forEach(function (it, i) {
+      var zone = categoryZone(it.name);
+      if (zone === "floor") { slots.push(i); floors.push(it); }
+      else if (zone === "riser") { slots.push(i); risers.push(it); }
+    });
+    if (!floors.length || !risers.length) return items.slice();
+    var out = items.slice();
+    var seq = floors.concat(risers);
+    slots.forEach(function (idx, k) { out[idx] = seq[k]; });
+    return out;
+  }
+
+  /* Default Breakdown category order: numeric price high to low, then at the
+     same price Floor before Riser. Anything those rules do not decide keeps
+     source relative order. Names are not sorted alphabetically. */
+  function defaultCategoryOrder(rows) {
+    var priced = [];
+    var unpriced = [];
+    (rows || []).forEach(function (row, i) {
+      var name = String(row && row.name != null ? row.name : "").trim();
+      if (!name) return;
+      var price = row.price;
+      var rec = { name: name, price: price, src: i };
+      if (typeof price === "number" && isFinite(price)) priced.push(rec);
+      else unpriced.push(rec);
+    });
+    priced.sort(function (a, b) {
+      if (a.price !== b.price) return b.price - a.price;
+      return a.src - b.src;
+    });
+    var names = [];
+    var i = 0;
+    while (i < priced.length) {
+      var j = i + 1;
+      while (j < priced.length && priced[j].price === priced[i].price) j++;
+      orderFloorBeforeRiser(priced.slice(i, j)).forEach(function (it) { names.push(it.name); });
+      i = j;
+    }
+    unpriced.forEach(function (it) { names.push(it.name); });
+    return names;
   }
 
   /* ---------- ExcelJS formatter ---------- */
@@ -1609,6 +1689,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     asOfFromExportTime: asOfFromExportTime,
     applyTypoFixes: applyTypoFixes,
     resolveCategoryOrder: resolveCategoryOrder,
+    defaultCategoryOrder: defaultCategoryOrder,
     colLetter: colLetter,
     cellText: cellText
   };
@@ -1811,7 +1892,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       $('#repProject').value='';
       $('#repSession').value='';
       S.catOrderOrig=(S.diag.priceCategories||[]).slice();
-      S.catOrder=S.catOrderOrig.slice();
+      S.catOrder=defaultCatNames();
       renderIssues(); renderKpis(); renderCatList(); renderTabs(); renderPreview(); refreshFname();
       $('#verifyBox').className='verify';
       $('#verifyBox').querySelector('h3').textContent='尚未匯出';
@@ -1900,6 +1981,18 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   };
   $('#repProject').oninput=$('#repSession').oninput=refreshFname;
   $('#typoFix').onchange=function(){ if(S.diag) renderPreview(); };
+  function defaultCatNames(){
+    var rows=(S.diag&&S.diag.priceCategoryRows)||[];
+    if(rows.length&&typeof F.defaultCategoryOrder==='function') return F.defaultCategoryOrder(rows);
+    return ((S.diag&&S.diag.priceCategories)||[]).slice();
+  }
+  $('#btnCatDefault').onclick=function(){
+    if(!S.diag) return;
+    S.catOrder=defaultCatNames();
+    renderCatList();
+    renderPreview();
+    toast('已套用預設票品次序');
+  };
   $('#btnCatReset').onclick=function(){
     S.catOrder=S.catOrderOrig.slice();
     renderCatList();
