@@ -424,6 +424,180 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return meta;
   }
 
+
+  function isNumericLike(v) {
+    if (typeof v === "number" && isFinite(v)) return true;
+    if (v instanceof Date) return false;
+    if (typeof v === "object" && v) {
+      if (typeof v.result === "number" && isFinite(v.result)) return true;
+    }
+    var t = cellText(v).trim();
+    return isNumericString(t);
+  }
+  function normalizeHeaderLabel(v) {
+    return cellText(v).trim().toLowerCase();
+  }
+  function isPriceCategoryLabel(v) {
+    return normalizeHeaderLabel(v) === "price category";
+  }
+  function sheetJsMerges(ws) {
+    return (ws["!merges"] || []).map(function (m) {
+      return { r1: m.s.r + 1, c1: m.s.c + 1, r2: m.e.r + 1, c2: m.e.c + 1 };
+    });
+  }
+  function excelJsMerges(ws) {
+    return ((ws.model && ws.model.merges) || []).map(function (ref) {
+      var parts = String(ref).split(":");
+      if (parts.length < 2) return null;
+      var a = decodeExcelJSCell(parts[0]);
+      var b = decodeExcelJSCell(parts[1]);
+      if (!a || !b) return null;
+      return { r1: a.r, c1: a.c, r2: b.r, c2: b.c };
+    }).filter(Boolean);
+  }
+  function verticalMergeBottom(merges, r, c) {
+    var bottom = r;
+    (merges || []).forEach(function (m) {
+      if (m.r1 <= r && r <= m.r2 && m.c1 <= c && c <= m.c2 && m.r2 > bottom) bottom = m.r2;
+    });
+    return bottom;
+  }
+
+  // Dynamic Breakdown header: start at "Price Category", depth 1..3
+  // (category row, optional Hold-type row, optional remark row), then the
+  // first data row (numeric Price/Capacity, or a non-header category label).
+  // Vertical merges (A8:A10 etc.) count as one header. Zero Hold types
+  // and/or zero remarks are valid.
+  function analyzeBreakdownHeader(getVal, merges, headerRow, maxCol, maxRow) {
+    var soldCol = 0, availCol = 0, priceCol = 0, capCol = 0, nameCol = 1;
+    for (var c = 1; c <= maxCol; c++) {
+      var h = normalizeHeaderLabel(getVal(headerRow, c));
+      if (h === "sold") soldCol = c;
+      if (h === "available") availCol = c;
+      if (h === "price") priceCol = c;
+      if (h === "capacity") capCol = c;
+      if (h === "price category") nameCol = c;
+    }
+    if (!availCol) availCol = maxCol;
+    var holdStart = 1, holdEnd = 0;
+    if (soldCol && availCol && availCol > soldCol + 1) {
+      holdStart = soldCol + 1;
+      holdEnd = availCol - 1;
+    }
+
+    var headerBottom = headerRow;
+    [nameCol, priceCol, capCol, soldCol, availCol].forEach(function (col) {
+      if (col) headerBottom = Math.max(headerBottom, verticalMergeBottom(merges, headerRow, col));
+    });
+    headerBottom = Math.min(headerBottom, headerRow + 2);
+
+    var typeRow = 0, remarkRow = 0;
+    if (holdStart <= holdEnd) {
+      var typeCand = headerRow + 1;
+      var remCand = headerRow + 2;
+      if (typeCand <= maxRow && typeCand <= headerRow + 2) {
+        var typeTexts = 0, typeNums = 0;
+        for (var c = holdStart; c <= holdEnd; c++) {
+          var v = getVal(typeCand, c);
+          if (isNumericLike(v)) typeNums++;
+          else if (!isBlankValue(v)) typeTexts++;
+        }
+        if (typeTexts > 0 && typeTexts >= typeNums) typeRow = typeCand;
+      }
+      if (typeRow && remCand <= maxRow) {
+        var remTexts = 0, remNums = 0;
+        for (var c = holdStart; c <= holdEnd; c++) {
+          var v = getVal(remCand, c);
+          if (isNumericLike(v)) remNums++;
+          else if (!isBlankValue(v)) remTexts++;
+        }
+        if (remTexts > 0 && remTexts >= remNums) remarkRow = remCand;
+      }
+    }
+
+    function isHeaderRepeatRow(r) {
+      if (r === typeRow || r === remarkRow) return false;
+      var name = cellText(getVal(r, nameCol)).trim();
+      if (/^total$/i.test(name)) return false;
+      if (isPriceCategoryLabel(name)) return true;
+      var priceH = priceCol ? normalizeHeaderLabel(getVal(r, priceCol)) : "";
+      var capH = capCol ? normalizeHeaderLabel(getVal(r, capCol)) : "";
+      var soldH = soldCol ? normalizeHeaderLabel(getVal(r, soldCol)) : "";
+      var availH = availCol ? normalizeHeaderLabel(getVal(r, availCol)) : "";
+      var headerWords = { price: 1, capacity: 1, sold: 1, available: 1, "": 1, "price category": 1, hold: 1 };
+      var allHeaderish =
+        (!priceCol || headerWords[priceH]) &&
+        (!capCol || headerWords[capH]) &&
+        (!soldCol || headerWords[soldH]) &&
+        (!availCol || headerWords[availH]) &&
+        (!name || isPriceCategoryLabel(name) || /^hold$/i.test(name));
+      if (allHeaderish && !isNumericLike(getVal(r, priceCol)) && !isNumericLike(getVal(r, capCol))) return true;
+      return false;
+    }
+    function isDataOrTotalRow(r) {
+      var name = cellText(getVal(r, nameCol)).trim();
+      if (isPriceCategoryLabel(name)) return false;
+      if (r === typeRow || r === remarkRow) return false;
+      if (/^total$/i.test(name)) return "total";
+      if (isNumericLike(getVal(r, priceCol)) || isNumericLike(getVal(r, capCol)) || (soldCol && isNumericLike(getVal(r, soldCol)))) return true;
+      if (name && !/^(price|capacity|sold|available|hold)$/i.test(name)) return true;
+      return false;
+    }
+
+    var dataStart = 0;
+    var scanTo = Math.min(maxRow, Math.max(headerBottom + 1, headerRow + 3) + 3);
+    for (var r = headerRow + 1; r <= scanTo; r++) {
+      if (isHeaderRepeatRow(r)) continue;
+      var k = isDataOrTotalRow(r);
+      if (k) { dataStart = r; break; }
+    }
+    if (!dataStart) dataStart = Math.max(headerBottom, remarkRow || typeRow || headerRow) + 1;
+
+    var totalRow = 0;
+    for (var r = maxRow; r >= dataStart; r--) {
+      if (/^total$/i.test(cellText(getVal(r, nameCol)).trim())) { totalRow = r; break; }
+    }
+    var dataEnd = totalRow ? totalRow - 1 : maxRow;
+
+    var types = [];
+    if (holdStart <= holdEnd) {
+      for (var c = holdStart; c <= holdEnd; c++) {
+        types.push({
+          col: c,
+          letter: colLetter(c),
+          type: typeRow ? cellText(getVal(typeRow, c)) : "",
+          remark: remarkRow ? cellText(getVal(remarkRow, c)) : ""
+        });
+      }
+    }
+
+    var priceCategories = [];
+    if (dataStart && dataEnd && dataEnd >= dataStart) {
+      for (var pr = dataStart; pr <= dataEnd; pr++) {
+        var cat = cellText(getVal(pr, nameCol)).trim();
+        if (cat && !isPriceCategoryLabel(cat)) priceCategories.push(cat);
+      }
+    }
+
+    return {
+      soldCol: soldCol,
+      availCol: availCol,
+      priceCol: priceCol,
+      capCol: capCol,
+      nameCol: nameCol,
+      holdStart: holdStart,
+      holdEnd: holdEnd,
+      typeRow: typeRow,
+      remarkRow: remarkRow,
+      headerBottom: headerBottom,
+      dataStart: dataStart,
+      dataEnd: dataEnd,
+      totalRow: totalRow,
+      holdTypes: types,
+      priceCategories: priceCategories
+    };
+  }
+
   function classifySheet(ws) {
     var rg = sheetRange(ws);
     var headerRow = 0, kind = "unknown", headers = [];
@@ -440,75 +614,28 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
     var info = { kind: kind, headerRow: headerRow, headers: headers, range: rg };
     if (kind === "breakdown" && headerRow) {
-      var soldCol = 0, availCol = 0, priceCol = 0, capCol = 0, nameCol = 1;
-      for (var c = 1; c <= rg.c2; c++) {
-        var h = cellText(getCell(ws, headerRow, c)).trim().toLowerCase();
-        if (h === "sold") soldCol = c;
-        if (h === "available") availCol = c;
-        if (h === "price") priceCol = c;
-        if (h === "capacity") capCol = c;
-        if (h === "price category") nameCol = c;
-      }
-      if (!availCol) availCol = rg.c2;
-      var holdStart = soldCol ? soldCol + 1 : 5;
-      var holdEnd = availCol ? availCol - 1 : rg.c2;
-      var typeRow = headerRow + 1;
-      var remarkRow = headerRow + 2;
-      var types = [];
-      var looksTypes = false, looksRemarks = false;
-      if (typeRow <= rg.r2) {
-        var typeTexts = 0, typeNums = 0;
-        for (var c = holdStart; c <= holdEnd; c++) {
-          var v = getCell(ws, typeRow, c);
-          if (typeof v === "number") typeNums++;
-          else if (!isBlankValue(v)) typeTexts++;
-        }
-        looksTypes = typeTexts > 0 && typeTexts >= typeNums;
-      }
-      if (looksTypes && remarkRow <= rg.r2) {
-        var remTexts = 0, remNums = 0;
-        for (var c = holdStart; c <= holdEnd; c++) {
-          var v = getCell(ws, remarkRow, c);
-          if (typeof v === "number") remNums++;
-          else if (!isBlankValue(v)) remTexts++;
-        }
-        looksRemarks = remTexts > 0 && remTexts >= remNums;
-      }
-      if (!looksTypes) { typeRow = 0; remarkRow = 0; }
-      if (!looksRemarks) remarkRow = 0;
-      for (var c = holdStart; c <= holdEnd; c++) {
-        types.push({
-          col: c,
-          letter: colLetter(c),
-          type: typeRow ? cellText(getCell(ws, typeRow, c)) : "",
-          remark: remarkRow ? cellText(getCell(ws, remarkRow, c)) : ""
-        });
-      }
-      var dataStart = headerRow + (looksRemarks ? 3 : looksTypes ? 2 : 1);
-      var totalRow = 0;
-      for (var r = rg.r2; r >= dataStart; r--) {
-        if (/^total$/i.test(cellText(getCell(ws, r, nameCol)).trim())) { totalRow = r; break; }
-      }
-      var dataEnd = totalRow ? totalRow - 1 : rg.r2;
-      info.soldCol = soldCol;
-      info.availCol = availCol;
-      info.priceCol = priceCol;
-      info.capCol = capCol;
-      info.nameCol = nameCol;
-      info.holdStart = holdStart;
-      info.holdEnd = holdEnd;
-      info.typeRow = typeRow;
-      info.remarkRow = remarkRow;
-      info.dataStart = dataStart;
-      info.dataEnd = dataEnd;
-      info.totalRow = totalRow;
-      info.holdTypes = types;
-      info.priceCategories = [];
-      if (dataStart && dataEnd && dataEnd >= dataStart) {
-        for (var pr = dataStart; pr <= dataEnd; pr++) {
-          info.priceCategories.push(cellText(getCell(ws, pr, nameCol)).trim());
-        }
-      }
+      var layout = analyzeBreakdownHeader(
+        function (r, c) { return getCell(ws, r, c); },
+        sheetJsMerges(ws),
+        headerRow,
+        rg.c2,
+        rg.r2
+      );
+      info.soldCol = layout.soldCol;
+      info.availCol = layout.availCol;
+      info.priceCol = layout.priceCol;
+      info.capCol = layout.capCol;
+      info.nameCol = layout.nameCol;
+      info.holdStart = layout.holdStart;
+      info.holdEnd = layout.holdEnd;
+      info.typeRow = layout.typeRow;
+      info.remarkRow = layout.remarkRow;
+      info.headerBottom = layout.headerBottom;
+      info.dataStart = layout.dataStart;
+      info.dataEnd = layout.dataEnd;
+      info.totalRow = layout.totalRow;
+      info.holdTypes = layout.holdTypes;
+      info.priceCategories = layout.priceCategories;
     }
     if (kind === "seat-details" && headerRow) {
       info.dataStart = headerRow + 1;
@@ -534,7 +661,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         out.push({ ref: ref, reason: "metadata 空白合併殘餘 " + ref });
       }
       // Full-width blank spacer (typically row 7)
-      if (r1 === r2 && isBlankValue(topVal) && c1 === 1 && c2 >= Math.max(8, maxC - 1)) {
+      if (r1 === r2 && isBlankValue(topVal) && c1 === 1 && c2 >= Math.max(4, maxC - 1)) {
         out.push({ ref: ref, reason: "空白間隔行合併 " + ref });
       }
     });
@@ -823,11 +950,47 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return v;
   }
 
+  function isOoxmlZip(arrayBuffer) {
+    var u = arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
+    return u.length >= 4 && u[0] === 0x50 && u[1] === 0x4b;
+  }
+  function toUint8Array(arrayBuffer) {
+    return arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
+  }
+  async function workbookFromArrayBuffer(arrayBuffer) {
+    if (isOoxmlZip(arrayBuffer)) {
+      var zipWb = new ExcelJS.Workbook();
+      await zipWb.xlsx.load(arrayBuffer);
+      return zipWb;
+    }
+    if (typeof XLSX === "undefined" || !XLSX.read) {
+      throw new Error("此檔為 .xls（BIFF），需要 SheetJS 先轉換。離線庫未正確載入。");
+    }
+    var wbS = XLSX.read(toUint8Array(arrayBuffer), { type: "array", raw: true, cellDates: true, cellNF: true });
+    var xlsxBuf = XLSX.write(wbS, { bookType: "xlsx", type: "array", cellDates: true });
+    var conv = new ExcelJS.Workbook();
+    await conv.xlsx.load(xlsxBuf);
+    return conv;
+  }
+
   async function formatWorkbook(arrayBuffer, options) {
     options = options || {};
     var typoFix = !!options.typoFix;
-    var src = new ExcelJS.Workbook();
-    await src.xlsx.load(arrayBuffer);
+    var src;
+    try {
+      src = await workbookFromArrayBuffer(arrayBuffer);
+    } catch (loadErr) {
+      // Last resort: force SheetJS conversion even if the zip sniff failed or ExcelJS rejected the file.
+      if (typeof XLSX === "undefined" || !XLSX.read) throw loadErr;
+      try {
+        var wbS2 = XLSX.read(toUint8Array(arrayBuffer), { type: "array", raw: true, cellDates: true, cellNF: true });
+        var xlsxBuf2 = XLSX.write(wbS2, { bookType: "xlsx", type: "array", cellDates: true });
+        src = new ExcelJS.Workbook();
+        await src.xlsx.load(xlsxBuf2);
+      } catch (e2) {
+        throw loadErr;
+      }
+    }
     var out = new ExcelJS.Workbook();
     out.creator = "HKT Excel Formatter";
     var notes = [];
@@ -864,41 +1027,31 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       var headerRow = srcHeader - rowShift;
 
       if (kind === "breakdown") {
+        var layout = analyzeBreakdownHeader(
+          function (r, c) { return rawValue(sht.getCell(r, c).value); },
+          excelJsMerges(sht),
+          srcHeader,
+          maxC,
+          sht.rowCount
+        );
+        var soldCol = layout.soldCol, availCol = layout.availCol, priceCol = layout.priceCol;
+        var capCol = layout.capCol, nameCol = layout.nameCol;
+        var holdStart = layout.holdStart, holdEnd = layout.holdEnd;
+        var srcType = layout.typeRow, srcRemark = layout.remarkRow;
+        var typeRow = srcType ? srcType - rowShift : 0;
+        var remarkRow = srcRemark ? srcRemark - rowShift : 0;
+        var srcDataStart = layout.dataStart;
+        var srcTotal = layout.totalRow;
+        var srcDataEnd = layout.dataEnd;
+        // Output data starts immediately after the last header/type/remark row.
+        // Do not use srcDataStart - rowShift: skipped vertical-merge header
+        // continuation rows (no type/remark) would otherwise leave a gap.
+        var headerBottom = remarkRow || typeRow || headerRow;
+        var dataStart = headerBottom + 1;
+        var dataEnd = dataStart + Math.max(0, srcDataEnd - srcDataStart);
+        var totalRow = srcTotal ? dataEnd + 1 : 0;
         var labels = [];
         for (var c = 1; c <= maxC; c++) labels.push(cellText(sht.getCell(srcHeader, c).value).trim());
-        var soldCol = 0, availCol = 0, priceCol = 0, capCol = 0, nameCol = 1;
-        for (var c = 1; c <= maxC; c++) {
-          var h = labels[c - 1].toLowerCase();
-          if (h === "sold") soldCol = c;
-          if (h === "available") availCol = c;
-          if (h === "price") priceCol = c;
-          if (h === "capacity") capCol = c;
-          if (h === "price category") nameCol = c;
-        }
-        if (!availCol) availCol = maxC;
-        var holdStart = soldCol ? soldCol + 1 : 5;
-        var holdEnd = availCol ? availCol - 1 : maxC - 1;
-        var srcType = srcHeader + 1;
-        var srcRemark = srcHeader + 2;
-        var typeTexts = 0, remTexts = 0;
-        for (var c = holdStart; c <= holdEnd; c++) {
-          var tv = sht.getCell(srcType, c).value;
-          if (!isBlankValue(tv) && typeof tv !== "number") typeTexts++;
-          var rv = sht.getCell(srcRemark, c).value;
-          if (!isBlankValue(rv) && typeof rv !== "number") remTexts++;
-        }
-        var typeRow = typeTexts ? srcType - rowShift : 0;
-        var remarkRow = remTexts ? srcRemark - rowShift : 0;
-        var srcDataStart = srcHeader + (remTexts ? 3 : typeTexts ? 2 : 1);
-        var srcTotal = 0;
-        for (var r = sht.rowCount; r >= srcDataStart; r--) {
-          if (/^total$/i.test(cellText(sht.getCell(r, nameCol).value).trim())) { srcTotal = r; break; }
-        }
-        var srcDataEnd = srcTotal ? srcTotal - 1 : sht.rowCount;
-        var dataStart = srcDataStart - rowShift;
-        var dataEnd = srcDataEnd - rowShift;
-        var totalRow = srcTotal ? srcTotal - rowShift : 0;
-        var headerBottom = remarkRow || typeRow || headerRow;
 
         // Copy header / type / remark / data / total values
         function copyRow(sr, dr) {
@@ -1147,12 +1300,24 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       var org = sheetRange(ows);
       var nrg = sheetRange(nws);
       var dropped = oInfo.blankSpacerRow ? 1 : 0;
+      var headerRepeatRows = {};
+      var headerRepeatCount = 0;
+      if (oInfo.kind === "breakdown" && oInfo.headerRow && oInfo.dataStart) {
+        for (var hr = oInfo.headerRow + 1; hr < oInfo.dataStart; hr++) {
+          if (hr === oInfo.typeRow || hr === oInfo.remarkRow) continue;
+          headerRepeatRows[hr] = true;
+          headerRepeatCount++;
+        }
+      }
 
       function mapRow(or) {
         if (or <= 6) return or;
         if (dropped && or === oInfo.blankSpacerRow) return null; // intended deletion
-        if (dropped && or > oInfo.blankSpacerRow) return or - 1;
-        return or;
+        if (headerRepeatRows[or]) return null; // vertical-merge header continuation, not copied
+        var shift = 0;
+        if (dropped && or > oInfo.blankSpacerRow) shift += 1;
+        if (headerRepeatCount && or >= (oInfo.dataStart || 0)) shift += headerRepeatCount;
+        return or - shift;
       }
 
       var oData = oInfo.kind === "seat-details" || oInfo.kind === "breakdown"
@@ -1518,14 +1683,18 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     if(info.kind==='breakdown'){
       var holds=info.holdTypes||[];
       var typo=$('#typoFix').checked;
-      html+='<tr><th rowspan="2">Price Category</th><th rowspan="2">Price</th><th rowspan="2">Capacity</th><th rowspan="2">Sold</th>';
-      html+='<th colspan="'+holds.length+'">Hold（'+holds.length+' 欄，動態掃描）</th><th rowspan="2">Available</th></tr><tr>';
-      holds.forEach(function(h){
-        var rem=h.remark||'';
-        if(typo) rem=F.applyTypoFixes(rem);
-        html+='<th>'+esc(h.type)+'<div class="remark" style="background:#C0C0C0;font-weight:400;font-size:9px;margin-top:3px;padding:2px;white-space:normal;min-width:70px">'+esc(rem)+'</div></th>';
-      });
-      html+='</tr>';
+      if(holds.length){
+        html+='<tr><th rowspan="2">Price Category</th><th rowspan="2">Price</th><th rowspan="2">Capacity</th><th rowspan="2">Sold</th>';
+        html+='<th colspan="'+holds.length+'">Hold（'+holds.length+' 欄，動態掃描）</th><th rowspan="2">Available</th></tr><tr>';
+        holds.forEach(function(h){
+          var rem=h.remark||'';
+          if(typo) rem=F.applyTypoFixes(rem);
+          html+='<th>'+esc(h.type)+'<div class="remark" style="background:#C0C0C0;font-weight:400;font-size:9px;margin-top:3px;padding:2px;white-space:normal;min-width:70px">'+esc(rem)+'</div></th>';
+        });
+        html+='</tr>';
+      } else {
+        html+='<tr><th>Price Category</th><th>Price</th><th>Capacity</th><th>Sold</th><th>Available</th></tr>';
+      }
     } else {
       html+='<tr>';
       (info.cols||sh.info && sh.info.cols||[]).forEach(function(c){ html+='<th>'+esc(c.name||c)+'</th>'; });
