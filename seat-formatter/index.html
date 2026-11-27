@@ -202,7 +202,7 @@
 </div>
 <footer>
   <div>Seat detail report Formatter v1</div>
-  <div>核對：重新讀 bytes　·　預覽只顯示頭 50 行　·　鎖座類型每場動態掃描</div>
+  <div>更新日期:20261127</div>
 </footer>
 <div class="toast" id="toast"></div>
 <div id="busy"><div class="box"><div class="spin"></div><div id="busyMsg">處理中…</div></div></div>
@@ -300,6 +300,135 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     { from: /repoen to damai/g, to: "reopen to damai" },
     { from: /McDonals/g, to: "McDonalds" }
   ];
+
+  /* Breakdown Hold identifiers restored from the Nov 4 excel-picker.
+     The letter is fixed for a 鎖座類型 name. Which types appear, and any
+     鎖座等級, are scanned from this file — never a fixed column list.
+     D and E keep the " for DM" wording. The second line stays in the same
+     header cell, Calibri 11 bold, black. */
+  var HOLD_IDENTIFIERS = {
+    "HKT-Hold1": "A",
+    "HKT-Hold2": "B",
+    "HKT-Hold3": "C",
+    "HKT-Hold4": "D for DM",
+    "HKT-Hold5": "E for DM",
+    "Temp Hold": "F",
+    "GroupsHold": "G",
+    "Hotline": "H",
+    "TBC-Hold1": "I",
+    "TBC-Hold2": "J",
+    "TBC-Hold3": "K",
+    "TBC-Hold4": "L",
+    "Promoter 1": "M",
+    "Promoter 2": "N",
+    "Promoter 3": "O",
+    "Promoter 4": "P",
+    "Promoter 5": "Q",
+    "Relocation": "R",
+    "House Seat": "S",
+    "Technical": "T",
+    "Unavails": "U",
+    "Venue Hold": "V",
+    "Wheelchair": "W",
+    "Sidelight": "X",
+    "Comp Hold": "Y",
+    "Hire/Cong": "Z"
+  };
+
+  function lockHeaderKind(label) {
+    var s = cellText(label).trim();
+    if (s === "鎖座類型" || s === "锁座类型") return "type";
+    if (s === "鎖座等級" || s === "锁座等级") return "level";
+    return "";
+  }
+  function holdTypeKey(value) {
+    return cellText(value).split("\n")[0].trim();
+  }
+  function holdIdentifierFor(value) {
+    var key = holdTypeKey(value);
+    if (Object.prototype.hasOwnProperty.call(HOLD_IDENTIFIERS, key)) return HOLD_IDENTIFIERS[key];
+    return null;
+  }
+  /* Second line is (等級+標識) when this file has a 鎖座等級 for that type,
+     otherwise (標識). Unmatched names, including Venue RV, are unchanged.
+     An existing "\n(" line is left as-is. */
+  function annotateHoldHeader(value, levelMap) {
+    if (value == null || value === "") return value;
+    var text = cellText(value);
+    if (/\n\(/.test(text)) return typeof value === "string" ? value : text;
+    var ident = holdIdentifierFor(text);
+    if (ident == null) return value;
+    var level = "";
+    var key = holdTypeKey(text);
+    if (levelMap && Object.prototype.hasOwnProperty.call(levelMap, key)) level = levelMap[key];
+    var base = typeof value === "string" ? value : text;
+    if (level != null && String(level) !== "") return base + "\n(" + String(level) + ident + ")";
+    return base + "\n(" + ident + ")";
+  }
+  function noteHoldLevel(counts, typeValue, levelValue) {
+    var type = cellText(typeValue).trim();
+    var level = cellText(levelValue).trim();
+    if (!type || !level) return;
+    if (!counts[type]) counts[type] = {};
+    counts[type][level] = (counts[type][level] || 0) + 1;
+  }
+  /* One level per type: the most common non-blank 鎖座等級 in this file.
+     A tie keeps the level that appeared first. */
+  function chooseHoldLevels(counts) {
+    var out = {};
+    Object.keys(counts).forEach(function (type) {
+      var best = null, bestN = -1;
+      Object.keys(counts[type]).forEach(function (level) {
+        var n = counts[type][level];
+        if (n > bestN) { bestN = n; best = level; }
+      });
+      if (best != null && best !== "") out[type] = best;
+    });
+    return out;
+  }
+  function scanHoldLevelColumns(maxRow, maxCol, getVal) {
+    var headerRow = 0, typeCol = 0, levelCol = 0;
+    var scanTo = Math.min(maxRow, 40);
+    for (var r = 1; r <= scanTo && !headerRow; r++) {
+      var tc = 0, lc = 0;
+      for (var c = 1; c <= maxCol; c++) {
+        var kind = lockHeaderKind(getVal(r, c));
+        if (kind === "type") tc = c;
+        else if (kind === "level") lc = c;
+      }
+      if (tc && lc) { headerRow = r; typeCol = tc; levelCol = lc; }
+    }
+    return { headerRow: headerRow, typeCol: typeCol, levelCol: levelCol };
+  }
+  function scanHoldLevelsSheetJS(wb) {
+    var counts = {};
+    if (!wb || !wb.SheetNames) return {};
+    wb.SheetNames.forEach(function (name) {
+      var ws = wb.Sheets[name];
+      if (!ws) return;
+      var rg = sheetRange(ws);
+      var found = scanHoldLevelColumns(rg.r2, rg.c2, function (r, c) { return getCell(ws, r, c); });
+      if (!found.headerRow) return;
+      for (var r = found.headerRow + 1; r <= rg.r2; r++) {
+        noteHoldLevel(counts, getCell(ws, r, found.typeCol), getCell(ws, r, found.levelCol));
+      }
+    });
+    return chooseHoldLevels(counts);
+  }
+  function scanHoldLevelsExcelJS(wb) {
+    var counts = {};
+    if (!wb || typeof wb.eachSheet !== "function") return {};
+    wb.eachSheet(function (sht) {
+      var maxC = Math.max(usedColumnCount(sht), sht.columnCount || 1);
+      var maxR = sht.rowCount || 0;
+      var found = scanHoldLevelColumns(maxR, maxC, function (r, c) { return sht.getCell(r, c).value; });
+      if (!found.headerRow) return;
+      for (var r = found.headerRow + 1; r <= maxR; r++) {
+        noteHoldLevel(counts, sht.getCell(r, found.typeCol).value, sht.getCell(r, found.levelCol).value);
+      }
+    });
+    return chooseHoldLevels(counts);
+  }
 
   function thinBorder() {
     var s = { style: "thin", color: { argb: COLOR_BLACK } };
@@ -793,6 +922,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     var ws = wb.Sheets[sheetName];
     if (!ws) return { rows: [], info: null };
     var info = classifySheet(ws);
+    if (info.kind === "breakdown") {
+      var holdLevels = scanHoldLevelsSheetJS(wb);
+      (info.holdTypes || []).forEach(function (h) {
+        var marked = annotateHoldHeader(h.type, holdLevels);
+        h.headerText = typeof marked === "string" ? marked : cellText(h.type);
+      });
+    }
     var rg = sheetRange(ws);
     var rows = [];
     if (info.kind === "breakdown") {
@@ -1181,6 +1317,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     out.creator = "HKT Excel Formatter";
     var notes = [];
     var structure = [];
+    var holdLevels = scanHoldLevelsExcelJS(src);
 
     src.eachSheet(function (sht) {
       var maxC = Math.max(usedColumnCount(sht), sht.columnCount || 1);
@@ -1244,7 +1381,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           for (var c = 1; c <= maxC; c++) copyCell(sr, c, dr, c);
         }
         copyRow(srcHeader, headerRow);
-        if (typeRow) copyRow(srcType, typeRow);
+        if (typeRow) {
+          copyRow(srcType, typeRow);
+          if (holdStart <= holdEnd) {
+            for (var c = holdStart; c <= holdEnd; c++) {
+              var typeCell = ws.getCell(typeRow, c);
+              var marked = annotateHoldHeader(typeCell.value, holdLevels);
+              if (marked !== typeCell.value) typeCell.value = marked;
+            }
+          }
+        }
         if (remarkRow) {
           copyRow(srcRemark, remarkRow);
           if (typoFix) {
@@ -1344,10 +1490,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (soldCol) qtyWidth(soldCol, "Sold");
         if (availCol) qtyWidth(availCol, "Available");
         var longestRemarkLines = 1;
+        var holdHeaderLines = 1;
         for (var c = holdStart; c <= holdEnd; c++) {
           var typeName = typeRow ? cellText(ws.getCell(typeRow, c).value) : "";
+          var typeLines = typeName ? typeName.split("\n") : [];
+          if (typeLines.length > holdHeaderLines) holdHeaderLines = typeLines.length;
           var remark = remarkRow ? cellText(ws.getCell(remarkRow, c).value) : "";
-          var w = fitWidth([typeName, "Hold", formatQty(99999)], { min: 11, max: 16, pad: 2 });
+          var w = fitWidth(typeLines.concat(["Hold", formatQty(99999)]), { min: 11, max: 16, pad: 2 });
           if (displayWidth(remark) > 40) w = Math.max(w, 14);
           ws.getColumn(c).width = w;
           if (remarkRow) {
@@ -1360,7 +1509,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           ws.getRow(remarkRow).height = Math.max(22, Math.min(120, 14 + longestRemarkLines * 13));
         }
         ws.getRow(headerRow).height = 14.4;
-        if (typeRow) ws.getRow(typeRow).height = 20;
+        if (typeRow) ws.getRow(typeRow).height = holdHeaderLines > 1 ? 30 : 20;
         for (var r = 1; r <= 6; r++) ws.getRow(r).height = 18;
 
         // Re-apply widths after merges (ExcelJS can drop a column width)
@@ -1453,6 +1602,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     if (opts.typoFix && typeof origV === "string" && typeof outV === "string") {
       if (applyTypoFixes(origV) === outV || applyTypoFixes(origV) === applyTypoFixes(outV)) return { ok: true, note: "typo-fix" };
     }
+    if (opts.allowHoldMark) {
+      var expectedHold = annotateHoldHeader(origV, opts.holdLevels);
+      if (expectedHold === outV || cellText(expectedHold) === cellText(outV)) return { ok: true, note: "hold-mark" };
+    }
     if (origV === outV) return { ok: true };
     if (cellText(origV) === cellText(outV)) return { ok: true };
     return { ok: false, orig: origV, out: outV };
@@ -1463,6 +1616,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     var typoFix = !!options.typoFix;
     var origWb = XLSX.read(origBuf, { type: "array", raw: true, cellDates: true });
     var outWb = XLSX.read(outBuf, { type: "array", raw: true, cellDates: true });
+    var holdLevels = scanHoldLevelsSheetJS(origWb);
     var mismatches = [];
     var sheets = [];
     var pass = true;
@@ -1566,7 +1720,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             allowNum = true;
           }
           var isRemark = typoFix && oInfo.remarkRow && r === oInfo.remarkRow && typoCells[c];
-          var cmp = normalizeCompare(ov, nv, { allowNumericCast: allowNum, typoFix: isRemark });
+          var isHoldHeader = oInfo.kind === "breakdown" && oInfo.typeRow && r === oInfo.typeRow &&
+            c >= oInfo.holdStart && c <= oInfo.holdEnd;
+          var cmp = normalizeCompare(ov, nv, {
+            allowNumericCast: allowNum,
+            typoFix: isRemark,
+            allowHoldMark: isHoldHeader,
+            holdLevels: holdLevels
+          });
           if (!cmp.ok) {
             if (mismatches.length < 80) {
               mismatches.push({
@@ -1877,7 +2038,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         holds.forEach(function(h){
           var rem=h.remark||'';
           if(typo) rem=F.applyTypoFixes(rem);
-          html+='<th>'+esc(h.type)+'<div class="remark" style="background:#C0C0C0;font-weight:400;font-size:9px;margin-top:3px;padding:2px;white-space:normal;min-width:70px">'+esc(rem)+'</div></th>';
+          var label=h.headerText!=null?h.headerText:(h.type||'');
+          var bits=String(label).split('\n').map(function(line){ return esc(line); }).join('<br>');
+          html+='<th>'+bits+'<div class="remark" style="background:#C0C0C0;font-weight:400;font-size:9px;margin-top:3px;padding:2px;white-space:normal;min-width:70px">'+esc(rem)+'</div></th>';
         });
         html+='</tr>';
       } else {
